@@ -341,9 +341,52 @@ threadsRouter.post('/', requireAuth, async (req, res, next) => {
   }
 });
 
-// ...
+// ==================== ✅ UPDATE THREAD ====================
+threadsRouter.put('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    if (!mongoose.isValidObjectId(id)) throw Object.assign(new Error('Not found'), { status: 404 });
 
-// ==================== ✅ UPDATED LIKE ====================
+    const text = String(req.body?.text ?? '').trim();
+    if (!text) throw Object.assign(new Error('text is required'), { status: 400 });
+
+    const thread = await ThreadModel.findById(id);
+    if (!thread) throw Object.assign(new Error('Not found'), { status: 404 });
+
+    const userId = req.auth!.sub;
+    if (String(thread.authorId) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+
+    thread.text = text;
+    thread.tags = extractTags(text);
+    await thread.save();
+
+    const updatedThread = await toThreadItem({ thread, meId: userId });
+    res.json({ item: updatedThread });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ==================== ✅ DELETE THREAD ====================
+threadsRouter.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    if (!mongoose.isValidObjectId(id)) throw Object.assign(new Error('Not found'), { status: 404 });
+
+    const thread = await ThreadModel.findById(id);
+    if (!thread) throw Object.assign(new Error('Not found'), { status: 404 });
+
+    const userId = req.auth!.sub;
+    if (String(thread.authorId) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+
+    await ThreadModel.findByIdAndDelete(id);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ==================== ✅ LIKE THREAD ====================
 threadsRouter.post('/:id/like', requireAuth, async (req, res, next) => {
   try {
     const id = String(req.params.id);
@@ -362,11 +405,9 @@ threadsRouter.post('/:id/like', requireAuth, async (req, res, next) => {
 
     const isSelf = String(thread.authorId) === String(userId);
     if (!isSelf) {
-      const io = req.app.get('io'); // ✅ Lấy Socket.IO instance
+      const io = req.app.get('io');
 
       if (!liked) {
-        // Like - tạo notification
-
         const notif = await NotificationModel.create({
           recipientId: new mongoose.Types.ObjectId(String(thread.authorId)),
           actorId: new mongoose.Types.ObjectId(userId),
@@ -376,7 +417,6 @@ threadsRouter.post('/:id/like', requireAuth, async (req, res, next) => {
           text: 'liked your post',
         });
 
-        // ✅ Gửi thông báo đến người dùng
         if (io) {
           const recipientId = String(thread.authorId);
           const recipientSocketId = onlineUsers.get(recipientId);
@@ -394,7 +434,6 @@ threadsRouter.post('/:id/like', requireAuth, async (req, res, next) => {
           }
         }
       } else {
-        // Unlike - xóa notification
         await NotificationModel.deleteMany({
           recipientId: new mongoose.Types.ObjectId(String(thread.authorId)),
           actorId: new mongoose.Types.ObjectId(userId),
@@ -411,6 +450,7 @@ threadsRouter.post('/:id/like', requireAuth, async (req, res, next) => {
   }
 });
 
+// ==================== ✅ COMMENTS ====================
 threadsRouter.get('/:id/comments', requireAuth, async (req, res, next) => {
   try {
     const id = String(req.params.id);
